@@ -38,15 +38,15 @@ impl TodoList {
         };
         self.items.insert(id, item);
         self.next_id += 1;
-        id
+        return id
     }
 
     fn complete_item(&mut self, id: u32) -> bool {
         if let Some(item) = self.items.get_mut(&id) {
             item.completed = true;
-            true
+            return true
         } else {
-            false
+            return false
         }
     }
 
