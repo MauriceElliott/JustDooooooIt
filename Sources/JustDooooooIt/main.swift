@@ -177,7 +177,7 @@ func main() {
     let args = CommandLine.arguments
     
     guard args.count > 1 else {
-        var todoList = loadTodoList()
+        let todoList = loadTodoList()
         todoList.display()
         return
     }
