@@ -131,6 +131,40 @@ struct TodoList: Codable {
         return subItems.sorted { $0.id < $1.id }
     }
     
+    mutating func renumberItems() {
+        var oldToNewId: [UInt32: UInt32] = [:]
+        var newItems: [String: TodoItem] = [:]
+        var currentId: UInt32 = 1
+        
+        let rootItems = getRootItems()
+        
+        func renumberItemAndChildren(item: TodoItem, newParentId: UInt32?) {
+            let newId = currentId
+            oldToNewId[item.id] = newId
+            currentId += 1
+            
+            let newItem = TodoItem(
+                id: newId,
+                text: item.text,
+                parentId: newParentId,
+                createdAt: item.createdAt
+            )
+            newItems[String(newId)] = newItem
+            
+            let children = getSubItems(parentId: item.id)
+            for child in children {
+                renumberItemAndChildren(item: child, newParentId: newId)
+            }
+        }
+        
+        for rootItem in rootItems {
+            renumberItemAndChildren(item: rootItem, newParentId: nil)
+        }
+        
+        items = newItems
+        nextId = currentId
+    }
+    
     func display() {
         let rootItems = getRootItems()
         if rootItems.isEmpty {
@@ -238,7 +272,9 @@ func main() {
     let args = CommandLine.arguments
     
     guard args.count > 1 else {
-        let todoList = loadTodoList()
+        var todoList = loadTodoList()
+        todoList.renumberItems()
+        saveTodoList(todoList)
         todoList.display()
         return
     }
@@ -312,6 +348,8 @@ func main() {
         }
         
     case "list", "l":
+        todoList.renumberItems()
+        saveTodoList(todoList)
         todoList.display()
         
     case "stats", "st":
