@@ -4,16 +4,31 @@ import Foundation
 struct TodoItem: Codable {
     let id: UInt32
     let text: String
-    var completed: Bool
     let parentId: UInt32?
     let createdAt: String
     
     enum CodingKeys: String, CodingKey {
         case id
         case text
-        case completed
         case parentId = "parent_id"
         case createdAt = "created_at"
+    }
+}
+
+// MARK: - CompletedTask
+struct CompletedTask: Codable {
+    let id: UInt32
+    let text: String
+    let completedAt: String
+    let hadSubtasks: Bool
+    let subtaskCount: Int
+    
+    enum CodingKeys: String, CodingKey {
+        case id
+        case text
+        case completedAt = "completed_at"
+        case hadSubtasks = "had_subtasks"
+        case subtaskCount = "subtask_count"
     }
 }
 
@@ -21,15 +36,29 @@ struct TodoItem: Codable {
 struct TodoList: Codable {
     var items: [String: TodoItem] = [:]
     var nextId: UInt32 = 1
+    var completedCount: UInt32 = 0
+    var completedHistory: [CompletedTask] = []
     
     enum CodingKeys: String, CodingKey {
         case items
         case nextId = "next_id"
+        case completedCount = "completed_count"
+        case completedHistory = "completed_history"
     }
     
     init() {
         self.items = [:]
         self.nextId = 1
+        self.completedCount = 0
+        self.completedHistory = []
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        items = try container.decode([String: TodoItem].self, forKey: .items)
+        nextId = try container.decode(UInt32.self, forKey: .nextId)
+        completedCount = try container.decodeIfPresent(UInt32.self, forKey: .completedCount) ?? 0
+        completedHistory = try container.decodeIfPresent([CompletedTask].self, forKey: .completedHistory) ?? []
     }
     
     mutating func addItem(text: String, parentId: UInt32? = nil) -> UInt32 {
@@ -42,7 +71,6 @@ struct TodoList: Codable {
         let item = TodoItem(
             id: id,
             text: text,
-            completed: false,
             parentId: parentId,
             createdAt: createdAt
         )
@@ -52,18 +80,34 @@ struct TodoList: Codable {
         return id
     }
     
-    mutating func completeItem(id: UInt32) -> Bool {
-        guard var item = items[String(id)] else { return false }
-        item.completed = true
-        items[String(id)] = item
-        return true
-    }
-    
-    mutating func uncompleteItem(id: UInt32) -> Bool {
-        guard var item = items[String(id)] else { return false }
-        item.completed = false
-        items[String(id)] = item
-        return true
+    mutating func completeItem(id: UInt32) -> (success: Bool, taskText: String, subtaskCount: Int) {
+        guard let item = items[String(id)] else { 
+            return (false, "", 0) 
+        }
+        
+        let subItems = getSubItems(parentId: id)
+        let subtaskCount = subItems.count
+        let hadSubtasks = subtaskCount > 0
+        
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        formatter.timeZone = TimeZone(abbreviation: "UTC")
+        let completedAt = formatter.string(from: Date())
+        
+        let completedTask = CompletedTask(
+            id: item.id,
+            text: item.text,
+            completedAt: completedAt,
+            hadSubtasks: hadSubtasks,
+            subtaskCount: subtaskCount
+        )
+        
+        completedHistory.append(completedTask)
+        completedCount += 1
+        
+        deleteItem(id: id)
+        
+        return (true, item.text, subtaskCount)
     }
     
     mutating func deleteItem(id: UInt32) -> Bool {
@@ -101,12 +145,28 @@ struct TodoList: Codable {
     
     func displayItem(item: TodoItem, indentLevel: Int) {
         let indent = String(repeating: "  ", count: indentLevel)
-        let status = item.completed ? "✓" : "○"
-        print("\(indent)[\(item.id)] \(status) \(item.text)")
+        print("\(indent)[\(item.id)] ○ \(item.text)")
         
         let subItems = getSubItems(parentId: item.id)
         for subItem in subItems {
             displayItem(item: subItem, indentLevel: indentLevel + 1)
+        }
+    }
+    
+    func displayStats() {
+        print("📊 Completion Statistics:")
+        print("Total completed: \(completedCount) tasks\n")
+        
+        if completedHistory.isEmpty {
+            print("No completed tasks yet.")
+            return
+        }
+        
+        print("Recently completed:")
+        let recentTasks = completedHistory.suffix(10).reversed()
+        for task in recentTasks {
+            let subtaskInfo = task.hadSubtasks ? " (\(task.subtaskCount) subtasks)" : ""
+            print("[\(task.id)] ✓ \(task.text)\(subtaskInfo) (\(task.completedAt))")
         }
     }
 }
@@ -165,12 +225,13 @@ func saveTodoList(_ todoList: TodoList) {
 // MARK: - Command Line Interface
 func printUsage() {
     print("Usage:")
-    print("  jdi add <text> [--parent <id>]    Add a new todo")
-    print("  jdi complete <id>                 Mark a todo as completed")
-    print("  jdi uncomplete <id>               Mark a todo as not completed")
-    print("  jdi delete <id>                   Delete a todo and its sub-todos")
-    print("  jdi list                          List all todos")
-    print("  jdi help                          Show this help message")
+    print("  jdi add <text>           Add a new todo (shorthand: a)")
+    print("  jdi sub <id> <text>      Add a subtask (shorthand: s)")
+    print("  jdi done <id>            Complete and archive todo (shorthand: d)")
+    print("  jdi delete <id>          Delete todo without archiving (shorthand: del)")
+    print("  jdi list                 List all todos (shorthand: l)")
+    print("  jdi stats                Show completion statistics (shorthand: st)")
+    print("  jdi help                 Show this help message (shorthand: h)")
 }
 
 func main() {
@@ -186,70 +247,57 @@ func main() {
     var todoList = loadTodoList()
     
     switch command {
-    case "add":
+    case "add", "a":
         guard args.count >= 3 else {
             print("Error: 'add' requires text")
             printUsage()
             return
         }
         
-        var text = ""
-        var parentId: UInt32? = nil
-        var i = 2
+        let text = args[2...].joined(separator: " ")
+        let id = todoList.addItem(text: text, parentId: nil)
+        saveTodoList(todoList)
+        print("Added todo \(id): \(text)")
         
-        while i < args.count {
-            if args[i] == "--parent" || args[i] == "-p" {
-                guard i + 1 < args.count, let id = UInt32(args[i + 1]) else {
-                    print("Error: --parent requires a valid ID")
-                    return
-                }
-                parentId = id
-                i += 2
-            } else {
-                if !text.isEmpty { text += " " }
-                text += args[i]
-                i += 1
-            }
+    case "sub", "s":
+        guard args.count >= 4 else {
+            print("Error: 'sub' requires parent ID and text")
+            print("Usage: jdi sub <parent_id> <text>")
+            return
         }
         
-        if let parentId = parentId, todoList.items[String(parentId)] == nil {
+        guard let parentId = UInt32(args[2]) else {
+            print("Error: Invalid parent ID")
+            return
+        }
+        
+        guard todoList.items[String(parentId)] != nil else {
             print("Error: Parent todo \(parentId) does not exist")
             return
         }
         
+        let text = args[3...].joined(separator: " ")
         let id = todoList.addItem(text: text, parentId: parentId)
         saveTodoList(todoList)
-        print("Added todo \(id): \(text)")
+        print("Added subtask \(id) to [\(parentId)]: \(text)")
         
-    case "complete":
+    case "done", "d":
         guard args.count == 3, let id = UInt32(args[2]) else {
-            print("Error: 'complete' requires a valid ID")
+            print("Error: 'done' requires a valid ID")
             printUsage()
             return
         }
         
-        if todoList.completeItem(id: id) {
+        let result = todoList.completeItem(id: id)
+        if result.success {
             saveTodoList(todoList)
-            print("Completed todo \(id)")
+            let subtaskInfo = result.subtaskCount > 0 ? " and \(result.subtaskCount) subtask(s)" : ""
+            print("✓ Completed and removed todo \(id)\(subtaskInfo): \(result.taskText)")
         } else {
             print("Error: Todo \(id) not found")
         }
         
-    case "uncomplete":
-        guard args.count == 3, let id = UInt32(args[2]) else {
-            print("Error: 'uncomplete' requires a valid ID")
-            printUsage()
-            return
-        }
-        
-        if todoList.uncompleteItem(id: id) {
-            saveTodoList(todoList)
-            print("Uncompleted todo \(id)")
-        } else {
-            print("Error: Todo \(id) not found")
-        }
-        
-    case "delete":
+    case "delete", "del":
         guard args.count == 3, let id = UInt32(args[2]) else {
             print("Error: 'delete' requires a valid ID")
             printUsage()
@@ -263,10 +311,13 @@ func main() {
             print("Error: Todo \(id) not found")
         }
         
-    case "list":
+    case "list", "l":
         todoList.display()
         
-    case "help", "--help", "-h":
+    case "stats", "st":
+        todoList.displayStats()
+        
+    case "help", "--help", "-h", "h":
         printUsage()
         
     default:

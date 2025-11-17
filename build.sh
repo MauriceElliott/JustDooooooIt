@@ -1,12 +1,22 @@
 #!/usr/bin/env fish
-set bin_path (swift build --show-bin-path | tail -n 1)
-set exe "JustDooooooIt"
 
-set exe_path (swift build --show-bin-path | grep '^/' | tail -n 1)
+# Clean previous builds
+rm -rf .build
+
+# Build the project
+swift build
+
+set bin_path (swift build --show-bin-path 2>/dev/null | tail -n 1)
+set exe "JustDooooooIt"
+set exe_path "$bin_path/$exe"
 
 if not test -x $exe_path
-  echo "JUSTTTT FIND ITTTTT"
+  echo "Error: Could not find executable at $exe_path"
   exit 1
 end
 
-mv -f $exe_path ~/.local/bin/jdi
+# Remove old binary and install new one
+rm -f ~/bin/jdi
+cp -f $exe_path ~/bin/jdi
+chmod +x ~/bin/jdi
+echo "Successfully installed jdi to ~/bin/jdi"
