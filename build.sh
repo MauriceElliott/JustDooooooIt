@@ -4,9 +4,9 @@
 rm -rf .build
 
 # Build the project
-swift build
+swift build -c release 2>&1 | grep -v "no version information available"
 
-set bin_path (swift build --show-bin-path 2>/dev/null | tail -n 1)
+set bin_path (swift build -c release --show-bin-path 2>/dev/null | tail -n 1)
 set exe "JustDooooooIt"
 set exe_path "$bin_path/$exe"
 

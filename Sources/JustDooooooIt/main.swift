@@ -105,7 +105,7 @@ struct TodoList: Codable {
         completedHistory.append(completedTask)
         completedCount += 1
         
-        deleteItem(id: id)
+        _ = deleteItem(id: id)
         
         return (true, item.text, subtaskCount)
     }
@@ -114,7 +114,7 @@ struct TodoList: Codable {
         // First, delete all sub-items
         let subItems = items.values.filter { $0.parentId == id }
         for subItem in subItems {
-            deleteItem(id: subItem.id)
+            _ = deleteItem(id: subItem.id)
         }
         
         // Then delete the item itself
